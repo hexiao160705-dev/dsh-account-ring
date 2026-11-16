@@ -1,0 +1,57 @@
+{
+  "name": "dsh-account-ring",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Multi-provider balance and quota ring for DeepSeek Harness: DeepSeek balance, Codex plan usage, and configurable tools, with a primary provider and ignorable warnings.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh",
+    "balance",
+    "quota",
+    "codex",
+    "usage"
+  ],
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "index.js",
+    "client.js",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "scripts/test.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "icon": "./icon.svg",
+  "homepage": "https://github.com/hexiao160705-dev/dsh-account-ring#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hexiao160705-dev/dsh-account-ring.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hexiao160705-dev/dsh-account-ring/issues"
+  },
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  }
+}

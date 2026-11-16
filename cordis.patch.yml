@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-account-ring
+      name: 'dsh-account-ring'
+      config: {}
