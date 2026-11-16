@@ -5,8 +5,9 @@ A multi-provider **balance / quota ring** for DeepSeek Harness (DSH). It sits be
 - Ring defaults to **DeepSeek official balance** (read through the signed-in DSH account, no API key needed)
 - Click the ring for per-provider details
 - Choose another provider as the ring's primary display
-- Ignore a provider's warning (for tools you no longer use, e.g. Trae)
+- Ignore a provider's warning (for tools you no longer use)
 - **Codex** plan usage (5-hour / weekly windows) is read from the local `codex` login
+- Coding plans already configured in DSH appear automatically from the model list
 - Additional tools can be added as **manual** rows in `~/.dsh/account-ring.json`
 
 ## Privacy / desensitization
@@ -42,20 +43,28 @@ Uses the signed-in DSH account. No `DEEPSEEK_API_KEY` is required. The ring show
 
 Reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), calls the ChatGPT usage endpoint, and normalizes the 5-hour and weekly windows. If the login expired it shows `请先在终端执行 codex login`; it never renders the token.
 
-### Trae and other manual tools
+### LobeHub and other coding plans
 
-Trae has no public balance API. Add a manual entry to `~/.dsh/account-ring.json`:
+The host reads the live DSH model catalog through `ctx.llm.listProviders()` + `listModels()`. Every configured provider with at least one model gets a **plan** row automatically; when a provider is added or removed from the model list, the row appears or disappears on the next refresh (30 seconds).
+
+- A plan row shows its model count and up to six model names.
+- Plans without a public balance API still work as a display/selection row; they do not invent a percentage.
+- LobeHub is labeled `LobeHub`; other known providers have friendly labels, unknown ones use the provider id.
+- Removed providers (including old Trae entries) are not shown.
+
+### Manual tools
+
+For a tool that is not a DSH model provider, add a manual entry to `~/.dsh/account-ring.json`:
 
 ```json
 {
   "providers": [
-    { "id": "trae", "label": "Trae", "remainingPercent": 40, "note": "手动配置" },
     { "id": "some-api", "label": "Some API", "amount": 18.5, "currency": "CNY" }
   ]
 }
 ```
 
-The file is optional; without a `trae` entry the row shows as unsupported, and its warning can still be ignored.
+Manual entries support `remainingPercent` or `amount` + `currency`.
 
 ## Warnings
 
@@ -66,9 +75,8 @@ The file is optional; without a `trae` entry the row shows as unsupported, and i
 
 ## Limitations
 
-- Trae has no public quota endpoint; only manual values are supported.
 - The Codex usage endpoint is not a public contract and may change.
-- The ring refreshes every 60 seconds while the page is visible; no polling while hidden.
+- The ring refreshes every 30 seconds while the page is visible; no polling while hidden.
 - This plugin is local-first; it does not sync settings across browsers or machines.
 
 ## License

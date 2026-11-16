@@ -9,7 +9,7 @@ const ROUTE = '/dsh-account-ring/providers'
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const TOKEN_URL = 'https://auth.openai.com/oauth/token'
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
-const CACHE_MS = 60_000
+const CACHE_MS = 30_000
 const TIMEOUT_MS = 12_000
 
 const codexHome = () => process.env.CODEX_HOME || path.join(homedir(), '.codex')
@@ -179,7 +179,7 @@ async function manualProviders() {
   for (const entry of list) {
     if (entry === null || typeof entry !== 'object' || typeof entry.id !== 'string') continue
     const id = entry.id.trim()
-    if (id === '' || id === 'deepseek' || id === 'codex') continue
+    if (id === '' || id === 'deepseek' || id === 'codex' || id === 'trae') continue
     const label = typeof entry.label === 'string' && entry.label !== '' ? entry.label : id
     if (Number.isFinite(Number(entry.remainingPercent))) {
       const percent = clampPercent(entry.remainingPercent)
@@ -208,18 +208,55 @@ async function manualProviders() {
   return rows
 }
 
-async function providerSnapshot(account) {
+const PLAN_LABELS = {
+  lobehub: 'LobeHub',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  moonshotai: 'Kimi',
+  zai: 'GLM',
+  xai: 'Grok',
+}
+
+async function dynamicPlans(llm) {
+  if (llm === undefined || llm === null || typeof llm.listProviders !== 'function') return []
+  let providers
+  try { providers = llm.listProviders() } catch { return [] }
+  if (!Array.isArray(providers)) return []
+  const rows = []
+  for (const provider of providers) {
+    if (typeof provider !== 'string' || provider === '') continue
+    if (/^deepseek/i.test(provider) || /codex/i.test(provider)) continue
+    let models = []
+    try { models = await llm.listModels(provider) } catch { models = [] }
+    if (!Array.isArray(models)) models = []
+    const ready = models.length > 0
+    rows.push({
+      id: 'plan:' + provider,
+      label: PLAN_LABELS[provider] ?? provider,
+      kind: 'plan',
+      status: ready ? 'ready' : 'unavailable',
+      provider,
+      modelCount: models.length,
+      models: models.map((model) => model?.name || model?.id).filter(Boolean).slice(0, 6),
+      note: ready ? '模型列表 · ' + models.length + ' 个模型' : '模型列表为空',
+      hint: ready ? undefined : '模型列表暂不可用',
+    })
+  }
+  return rows
+}
+
+async function providerSnapshot(account, llm) {
   const now = Date.now()
   if (usageCache.value !== null && now - usageCache.at < CACHE_MS) return usageCache.value
-  const [deepseek, codex, manual] = await Promise.all([deepseekProvider(account), codexProvider(), manualProviders()])
-  const trae = manual.find((row) => row.id === 'trae') ?? { id: 'trae', label: 'Trae', kind: 'manual', status: 'unsupported', hint: '暂无公开余额接口；可在 ~/.dsh/account-ring.json 手填' }
-  const value = { at: new Date().toISOString(), deepseek, codex, trae, manual: manual.filter((row) => row.id !== 'trae') }
+  const [deepseek, codex, manual, plans] = await Promise.all([deepseekProvider(account), codexProvider(), manualProviders(), dynamicPlans(llm)])
+  const value = { at: new Date().toISOString(), deepseek, codex, plans, manual: manual.filter((row) => row.id !== 'trae') }
   usageCache = { at: now, value }
   return value
 }
 
 export function apply(ctx) {
-  ctx.inject(['webServer'], (scope) => {
+  ctx.inject(['webServer', 'llm'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: ROUTE,
@@ -230,12 +267,12 @@ export function apply(ctx) {
           return
         }
         try {
-          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'))
+          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'), scope.llm)
           res.writeHead(200, {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
           })
-          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, snapshot.trae, ...snapshot.manual] }))
+          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, ...snapshot.plans, ...snapshot.manual] }))
         } catch {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify({ ok: true, at: new Date().toISOString(), providers: [] }))

@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({
     const PKG = 'dsh-account-ring'
     const PRIMARY_KEY = PKG + '.primary'
     const IGNORED_KEY = PKG + '.ignored'
-    const REFRESH_MS = 60_000
+    const REFRESH_MS = 30_000
 
     const isZh = () => {
       try { return String(navigator.language || '').toLowerCase().startsWith('zh') } catch { return false }
@@ -104,6 +104,7 @@ window.__ModuleLoader__.load({
         return Number(row.windows?.find((w) => w.id === 'weekly')?.remainingPercent
           ?? row.windows?.[0]?.remainingPercent ?? 0)
       }
+      if (row.kind === 'plan') return 100
       if (row.kind === 'manual') return Number(row.remainingPercent ?? row.percent ?? 0)
       if (Number.isFinite(row.amount)) return Math.min(100, Math.max(0, (row.amount / 30) * 100))
       return 0
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
     function ringText(row, wide) {
       if (row === undefined || row.status !== 'ready') return wide ? '—' : '?'
       if (row.kind === 'balance') return wide ? formatMoney(row.amount, row.currency) : (row.currency === 'USD' ? '$' : '¥')
+      if (row.kind === 'plan') { const n = Number(row.modelCount ?? row.models?.length ?? 0); return wide ? (n > 0 ? n + (zh ? ' 模型' : ' models') : 'ON') : 'ON' }
       const percent = Math.round(ringPercent(row))
       return wide ? percent + '%' : String(percent)
     }
@@ -246,6 +248,8 @@ window.__ModuleLoader__.load({
                 ? formatMoney(row.amount, row.currency)
                 : row.kind === 'usage'
                   ? Math.round(Number(row.windows?.find((w) => w.id === 'weekly')?.remainingPercent ?? row.windows?.[0]?.remainingPercent ?? 0)) + '%'
+                  : row.kind === 'plan'
+                    ? (Number(row.modelCount ?? row.models?.length ?? 0) > 0 ? String(row.modelCount ?? row.models?.length) + (zh ? ' 模型' : ' models') : 'ON')
                   : Number.isFinite(Number(row.amount))
                     ? formatMoney(Number(row.amount), row.currency)
                     : Math.round(Number(row.remainingPercent ?? row.percent ?? 0)) + '%'
@@ -282,6 +286,9 @@ window.__ModuleLoader__.load({
                       background: 'transparent', color: warn ? dot : 'var(--dsw-alias-label-tertiary, inherit)',
                     },
                   }, isIgnored ? '○' : warn ? '!' : '·')),
+                row.kind === 'plan' && row.status === 'ready' && Array.isArray(row.models) && row.models.length > 0
+                  ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary, inherit)', paddingLeft: 15, marginTop: 2 } }, row.models.join(' · '))
+                  : null,
                 row.kind === 'usage' && row.status === 'ready'
                   ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 15, marginTop: 3 } },
                     row.windows.map((window) => h('div', { key: window.id, style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary, inherit)' } },
