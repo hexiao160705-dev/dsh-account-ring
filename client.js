@@ -80,6 +80,7 @@ window.__ModuleLoader__.load({
     }
 
     function warningOf(row, ignored) {
+      if (row === undefined || row === null) return null
       if (ignored.has(row.id) || row.status !== 'ready') return null
       if (row.kind === 'usage' || row.kind === 'manual') {
         const percent = Number(row.kind === 'usage'
