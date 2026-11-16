@@ -212,7 +212,8 @@ async function providerSnapshot(account) {
   const now = Date.now()
   if (usageCache.value !== null && now - usageCache.at < CACHE_MS) return usageCache.value
   const [deepseek, codex, manual] = await Promise.all([deepseekProvider(account), codexProvider(), manualProviders()])
-  const value = { at: new Date().toISOString(), deepseek, codex, manual }
+  const trae = manual.find((row) => row.id === 'trae') ?? { id: 'trae', label: 'Trae', kind: 'manual', status: 'unsupported', hint: '暂无公开余额接口；可在 ~/.dsh/account-ring.json 手填' }
+  const value = { at: new Date().toISOString(), deepseek, codex, trae, manual: manual.filter((row) => row.id !== 'trae') }
   usageCache = { at: now, value }
   return value
 }
@@ -234,7 +235,7 @@ export function apply(ctx) {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
           })
-          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, ...snapshot.manual] }))
+          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, snapshot.trae, ...snapshot.manual] }))
         } catch {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify({ ok: true, at: new Date().toISOString(), providers: [] }))
