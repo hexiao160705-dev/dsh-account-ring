@@ -286,7 +286,7 @@ window.__ModuleLoader__.load({
                       background: 'transparent', color: warn ? dot : 'var(--dsw-alias-label-tertiary, inherit)',
                     },
                   }, isIgnored ? '○' : warn ? '!' : '·')),
-                row.kind === 'plan' && row.status === 'ready' && Array.isArray(row.models) && row.models.length > 0
+                (row.kind === 'plan' || row.kind === 'usage') && row.status === 'ready' && Array.isArray(row.models) && row.models.length > 0
                   ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary, inherit)', paddingLeft: 15, marginTop: 2 } }, row.models.join(' · '))
                   : null,
                 row.kind === 'usage' && row.status === 'ready'

@@ -1,6 +1,6 @@
 {
   "name": "dsh-account-ring",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Multi-provider balance and quota ring for DeepSeek Harness: DeepSeek balance, Codex plan usage, and configurable tools, with a primary provider and ignorable warnings.",
   "keywords": [

@@ -299,6 +299,39 @@ async function volcengineCash() {
   }
 }
 
+async function lobehubQuota(credentials) {
+  try {
+    let key = process.env.LOBEHUB_API_KEY
+    if ((key === undefined || key === '') && credentials !== undefined && credentials !== null && typeof credentials.resolve === 'function') {
+      const hit = await credentials.resolve('LOBEHUB_API_KEY')
+      if (hit !== undefined && typeof hit.value === 'string') key = hit.value
+    }
+    if (typeof key !== 'string' || key === '') return null
+    const response = await fetch('https://app.lobehub.com/api/v1/usage', {
+      headers: { authorization: 'Bearer ' + key, accept: 'application/json' },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!response.ok) return null
+    const json = await response.json()
+    const quota = json?.data?.quota
+    const limit = Number(quota?.limit)
+    const remaining = Number(quota?.remaining)
+    if (!Number.isFinite(limit) || limit <= 0 || !Number.isFinite(remaining)) return null
+    const resetsAt = typeof quota?.resetsAt === 'string' ? quota.resetsAt : undefined
+    return {
+      remainingPercent: clampPercent((remaining / limit) * 100),
+      usedPercent: clampPercent(100 - (remaining / limit) * 100),
+      amount: Number.isFinite(Number(json?.data?.remainingBalance)) ? Number(json.data.remainingBalance) : remaining,
+      currency: typeof json?.data?.currency === 'string' ? json.data.currency : 'USD',
+      limit,
+      remaining,
+      resetsAt,
+    }
+  } catch {
+    return null
+  }
+}
+
 const PLAN_LABELS = {
   lobehub: 'LobeHub',
   openai: 'OpenAI',
@@ -310,7 +343,7 @@ const PLAN_LABELS = {
   huoshan: '火山模型',
 }
 
-async function dynamicPlans(llm) {
+async function dynamicPlans(llm, lobeQuota) {
   if (llm === undefined || llm === null || typeof llm.listProviders !== 'function') return []
   let providers
   try { providers = llm.listProviders() } catch { return [] }
@@ -324,6 +357,28 @@ async function dynamicPlans(llm) {
     try { models = await llm.listModels(provider) } catch { models = [] }
     if (!Array.isArray(models)) models = []
     const ready = models.length > 0
+    const modelsList = models.map((model) => model?.name || model?.id).filter(Boolean).slice(0, 6)
+    if (provider === 'lobehub' && lobeQuota !== null) {
+      rows.push({
+        id: 'plan:' + provider,
+        label: PLAN_LABELS[provider] ?? provider,
+        kind: 'usage',
+        status: 'ready',
+        provider,
+        plan: 'LobeHub',
+        modelCount: models.length,
+        models: modelsList,
+        windows: [{
+          id: 'quota',
+          label: '额度',
+          remainingPercent: lobeQuota.remainingPercent,
+          usedPercent: lobeQuota.usedPercent,
+          ...(lobeQuota.resetsAt === undefined ? {} : { resetsAt: lobeQuota.resetsAt }),
+        }],
+        note: '余额 ' + (lobeQuota.currency === 'USD' ? '$' : '') + lobeQuota.amount.toFixed(2) + ' / ' + (lobeQuota.currency === 'USD' ? '$' : '') + lobeQuota.limit.toFixed(2) + ' · ' + models.length + ' 个模型',
+      })
+      continue
+    }
     rows.push({
       id: 'plan:' + provider,
       label: PLAN_LABELS[provider] ?? provider,
@@ -331,7 +386,7 @@ async function dynamicPlans(llm) {
       status: ready ? 'ready' : 'unavailable',
       provider,
       modelCount: models.length,
-      models: models.map((model) => model?.name || model?.id).filter(Boolean).slice(0, 6),
+      models: modelsList,
       note: ready ? '模型列表 · ' + models.length + ' 个模型' : '模型列表为空',
       hint: ready ? undefined : '模型列表暂不可用',
     })
@@ -339,17 +394,18 @@ async function dynamicPlans(llm) {
   return rows
 }
 
-async function providerSnapshot(account, llm) {
+async function providerSnapshot(account, llm, credentials) {
   const now = Date.now()
   if (usageCache.value !== null && now - usageCache.at < CACHE_MS) return usageCache.value
-  const [deepseek, codex, volcAfp, volcCash, manual, plans] = await Promise.all([deepseekProvider(account), codexProvider(), volcengineAfp(), volcengineCash(), manualProviders(), dynamicPlans(llm)])
+  const [deepseek, codex, volcAfp, volcCash, manual, lobeQuota] = await Promise.all([deepseekProvider(account), codexProvider(), volcengineAfp(), volcengineCash(), manualProviders(), lobehubQuota(credentials)])
+  const plans = await dynamicPlans(llm, lobeQuota)
   const value = { at: new Date().toISOString(), deepseek, codex, volcAfp, volcCash, plans, manual: manual.filter((row) => row.id !== 'trae') }
   usageCache = { at: now, value }
   return value
 }
 
 export function apply(ctx) {
-  ctx.inject(['webServer', 'llm'], (scope) => {
+  ctx.inject(['webServer', 'llm', 'credentials'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: ROUTE,
@@ -360,7 +416,7 @@ export function apply(ctx) {
           return
         }
         try {
-          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'), scope.llm)
+          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'), scope.llm, scope.credentials)
           res.writeHead(200, {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
