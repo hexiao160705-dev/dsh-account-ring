@@ -2,6 +2,8 @@
 // Host half: reads local tool credentials and exposes only display fields.
 // Tokens, account ids, emails and raw upstream payloads never leave this file.
 import { readFile } from 'node:fs/promises'
+import { execFile as execFileCallback } from 'node:child_process'
+import { promisify } from 'node:util'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -11,6 +13,7 @@ const TOKEN_URL = 'https://auth.openai.com/oauth/token'
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const CACHE_MS = 30_000
 const TIMEOUT_MS = 12_000
+const execFile = promisify(execFileCallback)
 
 const codexHome = () => process.env.CODEX_HOME || path.join(homedir(), '.codex')
 const authFile = () => path.join(codexHome(), 'auth.json')
@@ -208,6 +211,94 @@ async function manualProviders() {
   return rows
 }
 
+
+const VOLC_AFP_ID = 'volcengine-afp'
+const VOLC_CASH_ID = 'volcengine-cash'
+const VOLC_WINDOWS = [
+  ['AFPFiveHour', '5 小时'],
+  ['AFPDaily', '今天'],
+  ['AFPWeekly', '本周'],
+  ['AFPMonthly', '本月'],
+]
+
+async function runVolcCli(args, timeout = 12_000) {
+  const binary = process.env.VOLCENGINE_CLI || 've'
+  const { stdout } = await execFile(binary, args, {
+    timeout,
+    maxBuffer: 2 * 1024 * 1024,
+    env: process.env,
+  })
+  return JSON.parse(stdout)
+}
+
+async function volcengineAfp() {
+  try {
+    const json = await runVolcCli(['ark', 'GetAFPUsage', '--force', '--version', '2024-01-01', '--method', 'POST', '--output', 'json'])
+    const result = json?.Result
+    if (result === undefined || result === null) throw new Error('empty AFP response')
+    const windows = []
+    for (const [key, label] of VOLC_WINDOWS) {
+      const item = result[key]
+      const quota = Number(item?.Quota)
+      const used = Number(item?.Used)
+      if (!Number.isFinite(quota) || quota <= 0 || !Number.isFinite(used)) continue
+      const remainingPercent = clampPercent(100 - (used / quota) * 100)
+      const reset = Number(item?.ResetTime)
+      windows.push({
+        id: key.replace(/^AFP/, '').toLowerCase(),
+        label,
+        usedPercent: clampPercent((used / quota) * 100),
+        remainingPercent,
+        ...(Number.isFinite(reset) && reset > 0 ? { resetsAt: new Date(reset).toISOString() } : {}),
+      })
+    }
+    if (windows.length === 0) throw new Error('no AFP windows')
+    return {
+      id: VOLC_AFP_ID,
+      label: '火山方舟',
+      kind: 'usage',
+      status: 'ready',
+      plan: typeof result.PlanType === 'string' ? result.PlanType : undefined,
+      windows,
+      note: 'Agent Plan AFP · 本机 ve 登录',
+    }
+  } catch {
+    return {
+      id: VOLC_AFP_ID,
+      label: '火山方舟',
+      kind: 'usage',
+      status: 'unavailable',
+      hint: '需要本机 ve 已登录；AFP 额度读取失败',
+    }
+  }
+}
+
+async function volcengineCash() {
+  try {
+    const json = await runVolcCli(['billing', 'QueryBalanceAcct', '--force', '--version', '2022-01-01', '--method', 'POST', '--output', 'json'])
+    const result = json?.Result
+    const amount = Number(result?.AvailableBalance)
+    if (!Number.isFinite(amount)) throw new Error('empty balance')
+    return {
+      id: VOLC_CASH_ID,
+      label: '火山账户',
+      kind: 'balance',
+      status: 'ready',
+      amount,
+      currency: typeof result.Currency === 'string' ? result.Currency : 'CNY',
+      note: '火山引擎现金余额',
+    }
+  } catch {
+    return {
+      id: VOLC_CASH_ID,
+      label: '火山账户',
+      kind: 'balance',
+      status: 'unavailable',
+      hint: '需要本机 ve 已登录；现金余额读取失败',
+    }
+  }
+}
+
 const PLAN_LABELS = {
   lobehub: 'LobeHub',
   openai: 'OpenAI',
@@ -216,6 +307,7 @@ const PLAN_LABELS = {
   moonshotai: 'Kimi',
   zai: 'GLM',
   xai: 'Grok',
+  huoshan: '火山模型',
 }
 
 async function dynamicPlans(llm) {
@@ -250,8 +342,8 @@ async function dynamicPlans(llm) {
 async function providerSnapshot(account, llm) {
   const now = Date.now()
   if (usageCache.value !== null && now - usageCache.at < CACHE_MS) return usageCache.value
-  const [deepseek, codex, manual, plans] = await Promise.all([deepseekProvider(account), codexProvider(), manualProviders(), dynamicPlans(llm)])
-  const value = { at: new Date().toISOString(), deepseek, codex, plans, manual: manual.filter((row) => row.id !== 'trae') }
+  const [deepseek, codex, volcAfp, volcCash, manual, plans] = await Promise.all([deepseekProvider(account), codexProvider(), volcengineAfp(), volcengineCash(), manualProviders(), dynamicPlans(llm)])
+  const value = { at: new Date().toISOString(), deepseek, codex, volcAfp, volcCash, plans, manual: manual.filter((row) => row.id !== 'trae') }
   usageCache = { at: now, value }
   return value
 }
@@ -273,7 +365,7 @@ export function apply(ctx) {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
           })
-          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, ...snapshot.plans, ...snapshot.manual] }))
+          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, snapshot.volcAfp, snapshot.volcCash, ...snapshot.plans, ...snapshot.manual] }))
         } catch {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify({ ok: true, at: new Date().toISOString(), providers: [] }))

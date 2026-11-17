@@ -39,6 +39,16 @@ Reload/restart DSH. The ring appears in the sidebar footer.
 
 Uses the signed-in DSH account. No `DEEPSEEK_API_KEY` is required. The ring shows the recharge wallet; details also show granted bonus when present.
 
+### Volcengine / 火山方舟
+
+The ring reads the **Agent Plan AFP quota** through the locally logged-in `ve` CLI:
+
+```bash
+ve ark GetAFPUsage --force --version 2024-01-01 --method POST --output json
+```
+
+It shows the 5-hour, daily, weekly and monthly AFP windows, plus the Volcengine cash balance (`ve billing QueryBalanceAcct`). Set `VOLCENGINE_CLI` if `ve` is not on `PATH`. Both rows are read-only; no AK/SK is stored by the plugin.
+
 ### Codex
 
 Reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), calls the ChatGPT usage endpoint, and normalizes the 5-hour and weekly windows. If the login expired it shows `请先在终端执行 codex login`; it never renders the token.
