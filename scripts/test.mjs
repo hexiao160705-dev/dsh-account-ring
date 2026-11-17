@@ -37,7 +37,7 @@ const ctx = {
       effect(fn) { fn(); return () => {} },
       webServer: { register(value) { route = value; return () => {} } },
       llm: {
-        listProviders: () => ['deepseek-account', 'lobehub'],
+        listProviders: () => [{ id: 'deepseek-account', name: 'DeepSeek Account' }, { id: 'lobehub', name: 'lobehub' }],
         listModels: async (provider) => provider === 'lobehub'
           ? [{ id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5' }]
           : [],
@@ -70,6 +70,7 @@ const weekly = codex.windows.find((window) => window.id === 'weekly')
 if (weekly?.remainingPercent !== 47) throw new Error('weekly percent not normalized')
 const plan = json.providers.find((row) => row.id === 'plan:lobehub')
 if (plan?.kind !== 'plan' || plan?.modelCount !== 1) throw new Error('dynamic plan row not normalized')
+if (plan?.label !== 'LobeHub') throw new Error('plan label not normalized')
 if (json.providers.some((row) => row.id === 'trae')) throw new Error('trae must not be listed')
 if (JSON.stringify(json).includes('test-access') || JSON.stringify(json).includes('acct-test')) {
   throw new Error('route leaked credential fields')

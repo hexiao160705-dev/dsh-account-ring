@@ -224,7 +224,8 @@ async function dynamicPlans(llm) {
   try { providers = llm.listProviders() } catch { return [] }
   if (!Array.isArray(providers)) return []
   const rows = []
-  for (const provider of providers) {
+  for (const entry of providers) {
+    const provider = typeof entry === 'string' ? entry : entry?.id
     if (typeof provider !== 'string' || provider === '') continue
     if (/^deepseek/i.test(provider) || /codex/i.test(provider)) continue
     let models = []

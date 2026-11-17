@@ -50,6 +50,7 @@ The host reads the live DSH model catalog through `ctx.llm.listProviders()` + `l
 - A plan row shows its model count and up to six model names.
 - Plans without a public balance API still work as a display/selection row; they do not invent a percentage.
 - LobeHub is labeled `LobeHub`; other known providers have friendly labels, unknown ones use the provider id.
+- LobeHub's OpenAI-compatible endpoint exposes models, not account credit balance; its row reports the live model count instead of a currency amount. A real balance needs a LobeHub account API endpoint, which this plugin will not invent.
 - Removed providers (including old Trae entries) are not shown.
 
 ### Manual tools
