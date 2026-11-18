@@ -332,80 +332,226 @@ async function lobehubQuota(credentials) {
   }
 }
 
-const PLAN_LABELS = {
+const PROVIDER_LABELS = {
+  deepseek: 'DeepSeek',
+  codex: 'Codex',
+  volcengine: '火山方舟',
   lobehub: 'LobeHub',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   google: 'Google',
-  moonshotai: 'Kimi',
-  zai: 'GLM',
-  xai: 'Grok',
-  huoshan: '火山模型',
+}
+const PROVIDER_ORDER = { deepseek: 0, codex: 1, volcengine: 2, lobehub: 3 }
+const WINDOW_LABELS = { '7 days': '每周', '5 hours': '5 小时', '1 day': '今天', Credits: '额度', Credit: '额度' }
+const HIDDEN_PROVIDERS = new Set(['trae', 'trae-cn', 'trae-global'])
+const MAGPIE_BASE = String(process.env.MAGPIE_BASE_URL || 'http://127.0.0.1:3425').replace(/\/+$/, '')
+
+async function fetchMagpieQuotas() {
+  try {
+    const response = await fetch(`${MAGPIE_BASE}/v1/magpie/quotas`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!response.ok) return null
+    const json = await response.json()
+    return Array.isArray(json?.data) ? json.data : null
+  } catch {
+    return null
+  }
 }
 
-async function dynamicPlans(llm, lobeQuota) {
-  if (llm === undefined || llm === null || typeof llm.listProviders !== 'function') return []
-  let providers
-  try { providers = llm.listProviders() } catch { return [] }
-  if (!Array.isArray(providers)) return []
-  const rows = []
-  for (const entry of providers) {
-    const provider = typeof entry === 'string' ? entry : entry?.id
-    if (typeof provider !== 'string' || provider === '') continue
-    if (/^deepseek/i.test(provider) || /codex/i.test(provider)) continue
-    let models = []
-    try { models = await llm.listModels(provider) } catch { models = [] }
-    if (!Array.isArray(models)) models = []
-    const ready = models.length > 0
-    const modelsList = models.map((model) => model?.name || model?.id).filter(Boolean).slice(0, 6)
-    if (provider === 'lobehub' && lobeQuota !== null) {
-      rows.push({
-        id: 'plan:' + provider,
-        label: PLAN_LABELS[provider] ?? provider,
-        kind: 'usage',
-        status: 'ready',
-        provider,
-        plan: 'LobeHub',
-        modelCount: models.length,
-        models: modelsList,
-        windows: [{
-          id: 'quota',
-          label: '额度',
-          remainingPercent: lobeQuota.remainingPercent,
-          usedPercent: lobeQuota.usedPercent,
-          ...(lobeQuota.resetsAt === undefined ? {} : { resetsAt: lobeQuota.resetsAt }),
-        }],
-        note: '余额 ' + (lobeQuota.currency === 'USD' ? '$' : '') + lobeQuota.amount.toFixed(2) + ' / ' + (lobeQuota.currency === 'USD' ? '$' : '') + lobeQuota.limit.toFixed(2) + ' · ' + models.length + ' 个模型',
-      })
-      continue
-    }
-    rows.push({
-      id: 'plan:' + provider,
-      label: PLAN_LABELS[provider] ?? provider,
-      kind: 'plan',
-      status: ready ? 'ready' : 'unavailable',
-      provider,
-      modelCount: models.length,
-      models: modelsList,
-      note: ready ? '模型列表 · ' + models.length + ' 个模型' : '模型列表为空',
-      hint: ready ? undefined : '模型列表暂不可用',
+function maskAccount(value) {
+  if (typeof value !== 'string' || value === '') return ''
+  const at = value.indexOf('@')
+  if (at > 0) return `${value.slice(0, 3)}***${value.slice(at)}`
+  return value
+}
+
+function moneyOf(text) {
+  const matches = [...String(text).matchAll(/[¥￥$€]\s*([0-9]+(?:\.[0-9]+)?)/gu)]
+  if (matches.length === 0) return null
+  const symbol = matches[0][0].trim().charAt(0)
+  const currency = symbol === '$' ? 'USD' : symbol === '€' ? 'EUR' : 'CNY'
+  return { amount: Number(matches[0][1]), currency }
+}
+
+function magpieWindows(item) {
+  const windows = Array.isArray(item?.windows) ? item.windows : []
+  const mapped = []
+  for (const window of windows) {
+    if (window === null || typeof window !== 'object') continue
+    if (typeof window.display === 'string' && window.display === 'Unknown') continue
+    const remaining = Number(window.remaining)
+    if (!Number.isFinite(remaining)) continue
+    const used = Number(window.used)
+    const slug = String(window.name ?? mapped.length).toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '')
+    const rawLabel = typeof window.name === 'string' && window.name !== '' ? window.name : '额度'
+    mapped.push({
+      id: slug === '' ? `window-${mapped.length}` : slug,
+      label: WINDOW_LABELS[rawLabel] ?? rawLabel,
+      remainingPercent: clampPercent(remaining),
+      usedPercent: Number.isFinite(used) ? clampPercent(used) : clampPercent(100 - remaining),
+      ...(typeof window.resetsAt === 'string' ? { resetsAt: window.resetsAt } : {}),
     })
   }
-  return rows
+  return mapped
 }
 
-async function providerSnapshot(account, llm, credentials) {
+function magpieRowOf(item) {
+  const provider = String(item?.provider ?? '')
+  if (provider === '' || HIDDEN_PROVIDERS.has(provider)) return null
+  const account = maskAccount(item?.user)
+  const label = PROVIDER_LABELS[provider] ?? (typeof item?.name === 'string' && item.name !== '' ? item.name : provider)
+  const baseId = `magpie:${provider}:${account || 'default'}`
+
+  if (typeof item?.balance === 'string' && item.balance !== '') {
+    const money = moneyOf(item.balance)
+    if (money === null) return null
+    return {
+      id: baseId,
+      provider,
+      account,
+      label,
+      kind: 'balance',
+      status: 'ready',
+      amount: money.amount,
+      currency: money.currency,
+      note: [account, item.balance].filter(Boolean).join(' · '),
+    }
+  }
+
+  const windows = magpieWindows(item)
+  if (windows.length === 0) {
+    return {
+      id: baseId,
+      provider,
+      label,
+      kind: 'usage',
+      status: 'unavailable',
+      hint: typeof item?.error === 'string' && item.error !== '' ? item.error.slice(0, 160) : 'Magpie 没有返回额度窗口',
+    }
+  }
+  return {
+    id: baseId,
+    provider,
+    account,
+    label,
+    kind: 'usage',
+    status: 'ready',
+    plan: typeof item?.plan === 'string' && item.plan !== '' ? item.plan : undefined,
+    windows,
+    note: [account, 'Magpie'].filter(Boolean).join(' · '),
+  }
+}
+
+function lobehubRow(quota) {
+  if (quota === null) return null
+  const symbol = quota.currency === 'USD' ? '$' : '¥'
+  return {
+    id: 'lobehub',
+    provider: 'lobehub',
+    label: 'LobeHub',
+    kind: 'usage',
+    status: 'ready',
+    windows: [{
+      id: 'quota',
+      label: '额度',
+      remainingPercent: quota.remainingPercent,
+      usedPercent: quota.usedPercent,
+      ...(quota.resetsAt === undefined ? {} : { resetsAt: quota.resetsAt }),
+    }],
+    note: '余额 ' + symbol + quota.amount.toFixed(2) + ' / ' + symbol + quota.limit.toFixed(2),
+  }
+}
+
+async function providerSnapshot(account, credentials) {
   const now = Date.now()
   if (usageCache.value !== null && now - usageCache.at < CACHE_MS) return usageCache.value
-  const [deepseek, codex, volcAfp, volcCash, manual, lobeQuota] = await Promise.all([deepseekProvider(account), codexProvider(), volcengineAfp(), volcengineCash(), manualProviders(), lobehubQuota(credentials)])
-  const plans = await dynamicPlans(llm, lobeQuota)
-  const value = { at: new Date().toISOString(), deepseek, codex, volcAfp, volcCash, plans, manual: manual.filter((row) => row.id !== 'trae') }
+
+  const [quotas, deepseekOwn, codexOwn, volcAfp, volcCash, lobe, manual] = await Promise.all([
+    fetchMagpieQuotas(),
+    deepseekProvider(account),
+    codexProvider(),
+    volcengineAfp(),
+    volcengineCash(),
+    lobehubQuota(credentials),
+    manualProviders(),
+  ])
+
+  const rows = []
+  const seen = new Set()
+  const magpieRows = []
+
+  for (const item of quotas ?? []) {
+    const row = magpieRowOf(item)
+    if (row === null) continue
+    if (row.provider === 'volcengine' && row.status !== 'ready') continue
+    magpieRows.push(row)
+  }
+
+  // The ring's primary slot keeps showing the wallet the signed-in DSH account uses,
+  // so a Magpie read does not make the displayed number jump to another account.
+  const deepseekRows = magpieRows.filter((row) => row.provider === 'deepseek')
+  if (deepseekRows.length > 0) {
+    const local = Number(deepseekOwn?.amount)
+    const main = (Number.isFinite(local) ? deepseekRows.find((row) => Number.isFinite(row.amount) && Math.abs(row.amount - local) < 0.02) : undefined) ?? deepseekRows[0]
+    magpieRows.sort((a, b) => {
+      const left = PROVIDER_ORDER[a.provider] ?? 9
+      const right = PROVIDER_ORDER[b.provider] ?? 9
+      if (left !== right) return left - right
+      if (a.provider === 'deepseek' && b.provider === 'deepseek') {
+        if (a === main) return -1
+        if (b === main) return 1
+      }
+      return 0
+    })
+    let position = 0
+    for (const row of deepseekRows) {
+      position += 1
+      row.id = row === main ? 'deepseek' : `deepseek:${position}`
+      // Two wallets with the same label would be indistinguishable in the list.
+      if (row !== main && typeof row.account === 'string' && row.account !== '') row.label = `${row.label} · ${row.account}`
+    }
+  }
+
+  for (const row of magpieRows) {
+    if (row.provider === 'codex') row.id = 'codex'
+    else if (row.provider === 'volcengine') row.id = 'volcengine'
+    seen.add(row.provider)
+    rows.push(row)
+  }
+
+  if (!seen.has('deepseek')) rows.push({ ...deepseekOwn, provider: 'deepseek' })
+  if (!seen.has('codex')) rows.push({ ...codexOwn, provider: 'codex' })
+  if (!seen.has('volcengine')) {
+    rows.push({ ...volcAfp, provider: 'volcengine' })
+    rows.push({ ...volcCash, provider: 'volcengine' })
+  }
+  const lobeRow = lobehubRow(lobe)
+  if (lobeRow !== null && !seen.has('lobehub')) rows.push(lobeRow)
+  for (const row of manual) rows.push({ ...row, provider: 'manual' })
+
+  const providers = rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const a = PROVIDER_ORDER[left.row.provider] ?? 9
+      const b = PROVIDER_ORDER[right.row.provider] ?? 9
+      return a === b ? left.index - right.index : a - b
+    })
+    .map(({ row }) => {
+      const cleaned = { ...row }
+      delete cleaned.provider
+      delete cleaned.account
+      return cleaned
+    })
+
+  const value = { at: new Date().toISOString(), providers, source: quotas === null ? 'fallback' : 'magpie' }
   usageCache = { at: now, value }
   return value
 }
 
 export function apply(ctx) {
-  ctx.inject(['webServer', 'llm', 'credentials'], (scope) => {
+  ctx.inject(['webServer', 'credentials'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: ROUTE,
@@ -416,15 +562,15 @@ export function apply(ctx) {
           return
         }
         try {
-          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'), scope.llm, scope.credentials)
+          const snapshot = await providerSnapshot(ctx.get('deepseekAccount'), scope.credentials)
           res.writeHead(200, {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
           })
-          res.end(JSON.stringify({ ok: true, at: snapshot.at, providers: [snapshot.deepseek, snapshot.codex, snapshot.volcAfp, snapshot.volcCash, ...snapshot.plans, ...snapshot.manual] }))
+          res.end(JSON.stringify({ ok: true, at: snapshot.at, source: snapshot.source, providers: snapshot.providers }))
         } catch {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-          res.end(JSON.stringify({ ok: true, at: new Date().toISOString(), providers: [] }))
+          res.end(JSON.stringify({ ok: true, at: new Date().toISOString(), source: 'error', providers: [] }))
         }
       },
     }), 'dsh-account-ring: providers route')

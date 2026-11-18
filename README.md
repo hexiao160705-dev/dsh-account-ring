@@ -2,18 +2,18 @@
 
 A multi-provider **balance / quota ring** for DeepSeek Harness (DSH). It sits beside Settings in the sidebar foot:
 
-- Ring defaults to **DeepSeek official balance** (read through the signed-in DSH account, no API key needed)
+- **Magpie is the primary source**: when `magpie` is running, balances and quotas come from its `/v1/magpie/quotas` endpoint
+- Falls back to the local readers (DSH account, `~/.codex/auth.json`, `ve` CLI, LobeHub API) whenever Magpie is offline or a provider has no quota there
 - Click the ring for per-provider details
 - Choose another provider as the ring's primary display
 - Ignore a provider's warning (for tools you no longer use)
-- **Codex** plan usage (5-hour / weekly windows) is read from the local `codex` login
-- Coding plans already configured in DSH appear automatically from the model list
 - Additional tools can be added as **manual** rows in `~/.dsh/account-ring.json`
 
 ## Privacy / desensitization
 
 - The browser receives only display fields: provider label, amount or percentage, reset time, and a status word.
-- Codex access tokens, account ids, emails, and raw usage payloads stay in the host half and are never returned by the route.
+- Account emails are masked before they reach the page (`hex***@gmail.com`); Codex access tokens, account ids, and raw usage payloads stay in the host half.
+- The Magpie base URL can be changed with `MAGPIE_BASE_URL` (default `http://127.0.0.1:3425`).
 - The plugin never writes to `~/.codex/auth.json`; a refreshed access token stays in host memory only.
 - DeepSeek balance comes from the DSH account Remote (`ctx.remote.account.getBalance`), which already returns sanitized wallet amounts.
 
@@ -35,6 +35,19 @@ Reload/restart DSH. The ring appears in the sidebar footer.
 
 ## Providers
 
+### Magpie (primary)
+
+When Magpie is running, every row it reports comes from `GET http://127.0.0.1:3425/v1/magpie/quotas`:
+
+- `kind: balance` rows (`balance: "¥31.54"`) become currency rows.
+- `kind: subscription` / `plan` rows with `windows` become percentage rows using each window's `remaining` value.
+- Windows whose `display` is `Unknown` (for example Codex image generation) are skipped.
+- Providers Magpie cannot read yet — Volcengine Agent Plan without an access key — fall through to the local reader below.
+
+Trae is intentionally hidden. To show it again, remove `trae-cn` from `HIDDEN_PROVIDERS` in `index.js`.
+
+DeepSeek can have several wallets. The one matching the signed-in DSH account keeps the plain `deepseek` id so the ring does not jump to another account; the others get `deepseek:2`, `deepseek:3` and a label naming their account.
+
 ### DeepSeek
 
 Uses the signed-in DSH account. No `DEEPSEEK_API_KEY` is required. The ring shows the recharge wallet; details also show granted bonus when present.
@@ -53,15 +66,9 @@ It shows the 5-hour, daily, weekly and monthly AFP windows, plus the Volcengine 
 
 Reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`), calls the ChatGPT usage endpoint, and normalizes the 5-hour and weekly windows. If the login expired it shows `请先在终端执行 codex login`; it never renders the token.
 
-### LobeHub and other coding plans
+### LobeHub
 
-The host reads the live DSH model catalog through `ctx.llm.listProviders()` + `listModels()`. Every configured provider with at least one model gets a **plan** row automatically; when a provider is added or removed from the model list, the row appears or disappears on the next refresh (30 seconds).
-
-- A plan row shows its model count and up to six model names.
-- Plans without a public balance API still work as a display/selection row; they do not invent a percentage.
-- LobeHub is labeled `LobeHub`; other known providers have friendly labels, unknown ones use the provider id.
-- LobeHub usage is read from its (undocumented but working) `GET https://app.lobehub.com/api/v1/usage` endpoint; the row shows quota percentage, remaining balance, reset time and the live model list.
-- Removed providers (including old Trae entries) are not shown.
+`GET https://app.lobehub.com/api/v1/usage` with `LOBEHUB_API_KEY` is still read directly, because Magpie does not report LobeHub. The row shows the quota percentage, the remaining balance and the reset time.
 
 ### Manual tools
 

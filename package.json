@@ -1,8 +1,8 @@
 {
   "name": "dsh-account-ring",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
-  "description": "Multi-provider balance and quota ring for DeepSeek Harness: DeepSeek balance, Codex plan usage, and configurable tools, with a primary provider and ignorable warnings.",
+  "description": "Multi-provider balance and quota ring for DeepSeek Harness: reads Magpie quotas first, falls back to local DeepSeek, Codex, Volcengine and LobeHub readers.",
   "keywords": [
     "deepseek-harness",
     "dsh-plugin",
